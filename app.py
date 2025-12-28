@@ -1,31 +1,64 @@
-import streamlit as st
-from rag_core import answer_query
+import os
+import pickle
+import faiss
+import numpy as np
 
-st.set_page_config(
-    page_title="Sanskrit RAG System",
-    layout="wide"
+from sentence_transformers import SentenceTransformer
+from transformers import pipeline
+
+DATA_PATH = "rag_docs.txt"
+INDEX_PATH = "faiss_index.bin"
+CHUNKS_PATH = "chunks.pkl"
+
+def chunk_text(text, chunk_size=400, overlap=50):
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = start + chunk_size
+        chunks.append(text[start:end])
+        start = end - overlap
+    return chunks
+
+with open(DATA_PATH, encoding="utf-8") as f:
+    text = f.read()
+
+embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+
+if os.path.exists(INDEX_PATH) and os.path.exists(CHUNKS_PATH):
+    index = faiss.read_index(INDEX_PATH)
+    with open(CHUNKS_PATH, "rb") as f:
+        chunks = pickle.load(f)
+else:
+    chunks = chunk_text(text)
+    embeddings = embedding_model.encode(chunks).astype("float32")
+    index = faiss.IndexFlatL2(embeddings.shape[1])
+    index.add(embeddings)
+    faiss.write_index(index, INDEX_PATH)
+    with open(CHUNKS_PATH, "wb") as f:
+        pickle.dump(chunks, f)
+
+generator = pipeline(
+    "text2text-generation",
+    model="google/flan-t5-base",
+    device=-1
 )
 
-st.title("📜 Sanskrit Document Question Answering (RAG)")
-st.markdown(
-    "Ask questions based on the provided Sanskrit documents."
-)
+def retrieve(query, k=3):
+    q_emb = embedding_model.encode([query]).astype("float32")
+    _, idx = index.search(q_emb, k)
+    return [chunks[i] for i in idx[0]]
 
-query = st.text_input(
-    "Enter your Sanskrit question:",
-    placeholder="उदाहरणः – घण्टाकर्णः कः आसीत् ?"
-)
+def answer_query(query):
+    docs = retrieve(query)
+    context = "\n".join(docs)
+    prompt = f"""
+    Answer the question using ONLY the context below.
 
-if st.button("Get Answer"):
-    if query.strip():
-        with st.spinner("Retrieving answer..."):
-            answer, docs = answer_query(query)
+    Context:
+    {context}
 
-        st.subheader("✅ Answer")
-        st.write(answer)
-
-        st.subheader("📚 Retrieved Context")
-        for d in docs:
-            st.markdown(f"- {d}")
-    else:
-        st.warning("Please enter a question.")
+    Question:
+    {query}
+    """
+    answer = generator(prompt, max_length=200)[0]["generated_text"]
+    return answer, docs
