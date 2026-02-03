@@ -1,5 +1,5 @@
 import streamlit as st
-from rag_core import answer_query
+from Rag_core import answer_query
 
 st.set_page_config(page_title="Sanskrit RAG", layout="wide")
 st.title("📜 Sanskrit RAG System")
