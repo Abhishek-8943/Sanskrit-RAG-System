@@ -26,47 +26,24 @@ def chunk_text(text, chunk_size=400, overlap=50):
     return chunks
 
 
-embedding_model = SentenceTransformer(
-    "sentence-transformers/all-MiniLM-L6-v2"
-)
+embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-base")
-generator_model = AutoModelForSeq2SeqLM.from_pretrained(
-    "google/flan-t5-base"
-)
+model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-base")
 
 
 def generate_answer(prompt, max_length=200):
-    inputs = tokenizer(
-        prompt,
-        return_tensors="pt",
-        truncation=True
-    )
-
-    outputs = generator_model.generate(
-        **inputs,
-        max_length=max_length
-    )
-
-    return tokenizer.decode(
-        outputs[0],
-        skip_special_tokens=True
-    )
+    inputs = tokenizer(prompt, return_tensors="pt", truncation=True)
+    outputs = model.generate(**inputs, max_length=max_length)
+    return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 
 def build_index():
-    if not os.path.exists(DATA_PATH):
-        raise FileNotFoundError(f"{DATA_PATH} not found")
-
     with open(DATA_PATH, encoding="utf-8") as f:
         text = f.read()
 
     chunks = chunk_text(text)
-
-    embeddings = embedding_model.encode(
-        chunks,
-        convert_to_numpy=True
-    ).astype("float32")
+    embeddings = embedding_model.encode(chunks, convert_to_numpy=True).astype("float32")
 
     index = faiss.IndexFlatL2(embeddings.shape[1])
     index.add(embeddings)
@@ -88,19 +65,13 @@ def load_index():
     return build_index()
 
 
-def retrieve(query, index, chunks, k=3):
-    q_emb = embedding_model.encode(
-        [query],
-        convert_to_numpy=True
-    ).astype("float32")
-
-    _, idx = index.search(q_emb, k)
-    return [chunks[i] for i in idx[0]]
-
-
 def answer_query(query):
     index, chunks = load_index()
-    docs = retrieve(query, index, chunks)
+
+    q_emb = embedding_model.encode([query], convert_to_numpy=True).astype("float32")
+    _, idx = index.search(q_emb, 3)
+
+    docs = [chunks[i] for i in idx[0]]
     context = "\n".join(docs)
 
     prompt = f"""
@@ -117,16 +88,3 @@ Question:
 
     answer = generate_answer(prompt)
     return answer, docs
-
-
-if __name__ == "__main__":
-    while True:
-        q = input("Ask a question (type exit): ")
-        if q.lower() == "exit":
-            break
-
-        ans, ctx = answer_query(q)
-        print("\nAnswer:\n", ans)
-        for c in ctx:
-            print("-", c[:120], "...")
-        print("=" * 60)
