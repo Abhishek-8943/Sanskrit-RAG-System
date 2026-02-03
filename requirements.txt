@@ -1,5 +1,6 @@
 streamlit
+torch
+transformers
 sentence-transformers
 faiss-cpu
-transformers
-torch
+numpy
